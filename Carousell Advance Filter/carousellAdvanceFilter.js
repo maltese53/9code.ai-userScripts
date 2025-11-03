@@ -1,13 +1,11 @@
 // ==UserScript==
-// @name         Carousell 關鍵字 Filter
+// @name         Carousell 廣告篩選器
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Hide Carousell listings containing banned Chinese words, with a UI to manage the filter list.
+// @version      1.1 (Safari/Pro)
+// @description  制裁收買佬廣告阻住我買AP Watch
 // @author       9code.ai
 // @match        https://www.carousell.com.hk/*
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_addStyle
+// @grant        none
 // ==/UserScript==
 
 (function() {
@@ -22,25 +20,19 @@
         '高價回收', '高價求','各種','名牌錶','名牌手錶','購買','二手音響設備','音響HiFi ','新舊手錶','實體','免費上門'
     ];
 
-    // 用於獲取【商品列表項】動態 class name 的 XPath
-    const ITEM_XPATH = '/html/body/div[1]/div/main/div[2]/div/section[2]/div[1]/div/div[2]/div/div[1]';
+    // 用於獲取【商品列表項】動態 class name 的 XPath 陣列
+    const DESKTOP_ITEM_XPATH = '/html/body/div[1]/div/main/div[2]/div/section[2]/div[1]/div/div[2]/div/div[1]';
+    const MOBILE_ITEM_XPATH = '/html/body/div[1]/div/main/div/div[1]/div[4]/div[1]';
+    const ITEM_XPATHS = [DESKTOP_ITEM_XPATH, MOBILE_ITEM_XPATH];
 
-    // 【商品列表項】XPath 失敗時的後備 CSS 選擇器
-    const FALLBACK_SELECTOR = ['div.D_sg.D_sr','div.M_sU.M_sR'].join(', ');
-
-    // 3. 新增：用於獲取【廣告/推廣項】動態 class name 的 XPath
+    // 用於獲取【廣告/推廣項】動態 class name 的 XPath
     const AD_XPATH = '/html/body/div[1]/div/main/div/div[1]/div[4]/div[29]/div/div';
 
 
     // --- 全域變數 ---
-
-    // 存儲過濾詞對象 { word: '...', enabled: true/false }
+    const STORAGE_KEY = 'carousellFilterWords_v2'; // localStorage Key
     let managedFilterWords = [];
-
-    // 存儲動態獲取的【商品列表項】CSS 選擇器
-    let itemClassSelector = FALLBACK_SELECTOR;
-
-    // 3. 新增：存儲動態獲取的【廣告/推廣項】CSS 選擇器
+    let itemClassSelector = null; // 2. 移除：不再使用 Fallback
     let adClassSelector = null;
 
     /**
@@ -73,32 +65,30 @@
     function injectStyles() {
         const PRIMARY_COLOR = '#e74c3c'; // 主紅色
         const PRIMARY_COLOR_DARK = '#c0392b'; // 深紅色 (Hover)
-        const PANEL_WIDTH = '256px'; // 要求的面板寬度
+        const PANEL_WIDTH = '320px'; // 4. 修改：面板寬度改為 320px
 
-        GM_addStyle(`
+        const styleElement = document.createElement('style');
+        styleElement.type = 'text/css';
+        styleElement.innerHTML = `
             #filter-ui-container {
                 position: fixed;
                 top: 50%;
                 right: 0;
-                /* 2. 修正：恢復 1.7 版的統一滑動佈局 */
                 transform: translateY(-50%) translateX(${PANEL_WIDTH});
                 z-index: 9999;
                 font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
-                /* 使用 flex 讓按鈕和面板水平排列 */
                 display: flex;
                 align-items: center;
                 transition: transform 0.3s ease-out;
             }
 
             #filter-ui-container.is-expanded {
-                /* 展開狀態：滑回原位 (translateX(0)) */
                 transform: translateY(-50%) translateX(0);
             }
 
             #filter-toggle-btn {
-                /* 按鈕現在是 flex 佈局的一部分 */
                 position: relative;
-                order: 1; /* 按鈕在左側 */
+                order: 1;
                 background-color: ${PRIMARY_COLOR};
                 color: white;
                 padding: 16px 8px 16px 10px;
@@ -120,7 +110,7 @@
             }
 
             #filter-ui-container.is-expanded #filter-toggle-btn svg {
-                transform: rotate(180deg); /* 箭頭旋轉 */
+                transform: rotate(180deg);
             }
 
             #filter-panel {
@@ -132,19 +122,19 @@
                 box-shadow: 0 4px 12px rgba(0,0,0,0.15);
                 display: flex;
                 flex-direction: column;
-                order: 2; /* 面板在右側 */
+                order: 2;
             }
 
             .panel-header {
                 font-size: 16px;
                 font-weight: bold;
                 padding: 12px;
-                background-color: ${PRIMARY_COLOR}; /* 紅色主題 */
-                color: white; /* 白色文字 */
+                background-color: ${PRIMARY_COLOR};
+                color: white;
                 border-bottom: 1px solid #ddd;
                 text-align: center;
                 border-top-right-radius: 8px;
-                border-top-left-radius: 8px;
+                border-top-left-radius: 8px; /* 3. 修改：新增左上圓角 */
             }
 
             .add-section {
@@ -158,7 +148,7 @@
                 border: 1px solid #ccc;
                 border-radius: 4px;
                 padding: 8px;
-                font-size: 14px;
+                font-size: 16px; /* 1. 修改：防止 iPhone 縮放 */
                 margin-right: 5px;
             }
             #filter-add-input:focus {
@@ -169,8 +159,8 @@
 
             #filter-add-btn {
                 padding: 8px 12px;
-                font-size: 14px;
-                background-color: ${PRIMARY_COLOR}; /* 紅色主題 */
+                font-size: 16px; /* 1. 修改：與輸入框一致 */
+                background-color: ${PRIMARY_COLOR};
                 color: white;
                 border: none;
                 border-radius: 4px;
@@ -179,7 +169,7 @@
             }
 
             #filter-add-btn:hover {
-                background-color: ${PRIMARY_COLOR_DARK}; /* 深紅色 */
+                background-color: ${PRIMARY_COLOR_DARK};
             }
 
             .scrolling-menu {
@@ -194,7 +184,7 @@
                 justify-content: space-between;
                 padding: 8px 5px;
                 border-bottom: 1px solid #eee;
-                font-size: 14px;
+                font-size: 16px; /* 1. 修改：列表字體也放大以保持一致 */
             }
 
             .filter-item:last-child {
@@ -219,7 +209,6 @@
                 flex-shrink: 0;
             }
 
-            /* 修正：增加 Slider 樣式權重 */
             #filter-panel .toggle-switch {
                 position: relative;
                 display: inline-block;
@@ -269,7 +258,7 @@
             .remove-btn {
                 background: none;
                 border: none;
-                color: ${PRIMARY_COLOR}; /* 紅色主題 */
+                color: ${PRIMARY_COLOR};
                 font-size: 18px;
                 font-weight: bold;
                 cursor: pointer;
@@ -278,9 +267,10 @@
             }
 
             .remove-btn:hover {
-                color: ${PRIMARY_COLOR_DARK}; /* 深紅色 */
+                color: ${PRIMARY_COLOR_DARK};
             }
-        `);
+        `;
+        document.head.appendChild(styleElement);
     }
 
     /**
@@ -303,10 +293,7 @@
                 const word = e.target.closest('.filter-item').dataset.word;
                 onRemoveWord(word);
             } else if (e.target.classList.contains('slider') || e.target.classList.contains('toggle-switch')) {
-                const input = e.target.closest('.filter-item').querySelector('input[type="checkbox"]');
-                if (input && !e.target.classList.contains('remove-btn')) {
-                    // change 事件會自動處理
-                }
+                // 'change' event will handle this
             }
         });
 
@@ -320,53 +307,72 @@
     }
 
     /**
-     * 3. 修改：通用的 XPath 獲取 class 選擇器函數
      * @param {string} xpath - 要查詢的 XPath
-     * @param {string | null} fallbackSelector - 失敗時返回的後備選擇器
      * @returns {string | null} - CSS 選擇器, e.g., "div.classA.classB"
      */
-    function getClassSelectorFromXPath(xpath, fallbackSelector) {
+    function getClassSelectorFromXPath(xpath) {
         try {
             const xpathResult = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
             const element = xpathResult.singleNodeValue;
 
             if (element && element.classList.length > 0) {
-                // 創建一個基於標籤和 class 的精確選擇器
                 const tagName = element.tagName.toLowerCase();
                 const classSelector = Array.from(element.classList).join('.');
                 const dynamicSelector = `${tagName}.${classSelector}`;
-
                 console.log(`Carousell Filter: 成功獲取動態選擇器 for ${xpath}:`, dynamicSelector);
                 return dynamicSelector;
             } else {
-                console.warn(`Carousell Filter: XPath 元素未找到 (for ${xpath})。將使用後備選擇器。`);
-                return fallbackSelector;
+                return null; // 2. 移除：不再返回 fallback
             }
         } catch (error) {
             console.error(`Carousell Filter: XPath 執行錯誤 (for ${xpath}):`, error);
-            return fallbackSelector;
+            return null; // 2. 移除：不再返回 fallback
         }
+    }
+
+    /**
+     * 2. 移除：嘗試所有 XPath 來找到當前活躍的商品選擇器
+     * @returns {string | null} - 找到的 CSS 選擇器，或 null
+     */
+    function findActiveItemSelector() {
+        for (const xpath of ITEM_XPATHS) {
+            const selector = getClassSelectorFromXPath(xpath);
+            if (selector) {
+                return selector;
+            }
+        }
+        console.warn(`Carousell Filter: 所有 XPath 都未找到商品元素。`);
+        return null; // 2. 移除：不再返回 fallback
     }
 
 
     /**
-     * 從 GM 存儲中加載過濾詞列表
+     * 從 localStorage 加載過濾詞列表
      */
-    async function loadFilterWords() {
-        const savedWords = await GM_getValue('carousellFilterWords', null);
-        if (savedWords) {
-            managedFilterWords = savedWords;
-        } else {
+    function loadFilterWords() {
+        try {
+            const savedWordsRaw = localStorage.getItem(STORAGE_KEY);
+            if (savedWordsRaw) {
+                managedFilterWords = JSON.parse(savedWordsRaw);
+            } else {
+                managedFilterWords = defaultBannedWords.map(word => ({ word: word, enabled: true }));
+            }
+        } catch (e) {
+            console.error("Carousell Filter: 無法加載過濾詞, 重置為預設值。", e);
             managedFilterWords = defaultBannedWords.map(word => ({ word: word, enabled: true }));
         }
         renderWordList();
     }
 
     /**
-     * 將當前的過濾詞列表保存到 GM 存儲
+     * 將當前的過濾詞列表保存到 localStorage
      */
-    async function saveFilterWords() {
-        await GM_setValue('carousellFilterWords', managedFilterWords);
+    function saveFilterWords() {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(managedFilterWords));
+        } catch (e) {
+             console.error("Carousell Filter: 無法保存過濾詞。", e);
+        }
     }
 
     /**
@@ -374,6 +380,7 @@
      */
     function renderWordList() {
         const listContainer = document.getElementById('filter-word-list');
+        if (!listContainer) return;
         listContainer.innerHTML = '';
 
         managedFilterWords.forEach(item => {
@@ -410,7 +417,7 @@
             saveFilterWords();
             renderWordList();
             input.value = '';
-            runAllFilters(); // 3. 修正：運行所有過濾器
+            runAllFilters();
         }
     }
 
@@ -421,7 +428,7 @@
         managedFilterWords = managedFilterWords.filter(item => item.word !== wordToRemove);
         saveFilterWords();
         renderWordList();
-        runAllFilters(); // 3. 修正：運行所有過濾器
+        runAllFilters();
     }
 
     /**
@@ -436,7 +443,7 @@
             if (itemEl) {
                 itemEl.classList.toggle('is-disabled', !isEnabled);
             }
-            runAllFilters(); // 3. 修正：運行所有過濾器
+            runAllFilters();
         }
     }
 
@@ -444,11 +451,21 @@
      * 核心過濾函數 (關鍵詞)
      */
     function filterListings() {
+        // 2. 移除：修改檢查邏輯
+        if (!itemClassSelector) {
+            const dynamicSelector = findActiveItemSelector();
+            if (dynamicSelector) {
+                console.log('Carousell Filter: [運行時] 成功獲取商品列表選擇器。');
+                itemClassSelector = dynamicSelector;
+            } else {
+                return; // 如果還是找不到選擇器，則不執行過濾
+            }
+        }
+
         const activeWords = managedFilterWords
             .filter(item => item.enabled)
             .map(item => item.word);
 
-        // 使用動態獲取的選擇器
         const items = document.querySelectorAll(itemClassSelector);
 
         if (activeWords.length === 0) {
@@ -474,40 +491,37 @@
     }
 
     /**
-     * 3. 新增：根據 class name 移除廣告元素
+     * 根據 class name 移除廣告元素
      */
     function removeAdsByClass() {
         if (!adClassSelector) {
-            // 如果 adClassSelector 還未找到 (可能頁面剛加載完)
-            // 嘗試在運行時再次獲取
-            adClassSelector = getClassSelectorFromXPath(AD_XPATH, null);
+            adClassSelector = getClassSelectorFromXPath(AD_XPATH); // 2. 移除：移除 fallback
             if (!adClassSelector) {
-                // 這次也找不到，直接返回，下次再試
                 return;
+            } else {
+                 console.log('Carousell Filter: [運行時] 成功獲取廣告列表選擇器。');
             }
         }
 
         try {
             const adItems = document.querySelectorAll(adClassSelector);
             adItems.forEach(item => {
-                // 檢查是否已經被隱藏，避免重複操作
                 if (item.style.display !== 'none') {
                     item.style.display = 'none';
                 }
             });
         } catch (e) {
             console.error('Carousell Filter: 移除廣告時出錯:', e);
-            // 如果選擇器失效，重置它，以便下次重新獲取
             adClassSelector = null;
         }
     }
 
     /**
-     * 3. 新增：運行所有過濾器
+     * 運行所有過濾器
      */
     function runAllFilters() {
-        filterListings(); // 關鍵詞過濾
-        removeAdsByClass(); // 廣告 class 過濾
+        filterListings();
+        removeAdsByClass();
     }
 
     /**
@@ -536,30 +550,34 @@
     /**
      * 腳本初始化
      */
-    async function init() {
-        // 1. 獲取動態選擇器
-        itemClassSelector = getClassSelectorFromXPath(ITEM_XPATH, FALLBACK_SELECTOR);
-        adClassSelector = getClassSelectorFromXPath(AD_XPATH, null); // 初始嘗試獲取
+    function init() {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setup);
+        } else {
+            setup();
+        }
+    }
 
-        // 2. 注入 CSS 和 HTML
+    /**
+     * 分離出的 setup 函數
+     */
+    function setup() {
+        itemClassSelector = findActiveItemSelector();
+        adClassSelector = getClassSelectorFromXPath(AD_XPATH); // 2. 移除：移除 fallback
+
         injectStyles();
         injectUI();
 
-        // 3. 綁定事件
         addEventListeners();
 
-        // 4. 加載保存的詞彙
-        await loadFilterWords();
+        loadFilterWords();
 
-        // 初始運行
-        setTimeout(runAllFilters, 500); // 3. 修正：運行所有過濾器
+        setTimeout(runAllFilters, 500);
 
-        // 設置 MutationObserver
-        const observer = new MutationObserver(runAllFilters); // 3. 修正：運行所有過濾器
+        const observer = new MutationObserver(runAllFilters);
         observer.observe(document.body, { childList: true, subtree: true });
 
-        // 設置定時器作為後備
-        setInterval(runAllFilters, 3000); // 3. 修正：運行所有過濾器
+        setInterval(runAllFilters, 3000);
     }
 
     init();
